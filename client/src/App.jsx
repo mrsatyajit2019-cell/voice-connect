@@ -25,6 +25,13 @@ function App() {
 
     socketRef.current.on('connect', () => {
       console.log('Connected to signaling server');
+      // Force re-render to update status dot
+      setStatus(prev => prev);
+    });
+
+    socketRef.current.on('disconnect', () => {
+      console.log('Disconnected from signaling server');
+      setStatus(prev => prev);
     });
 
     socketRef.current.on('partner_found', async ({ initiator }) => {
@@ -251,9 +258,19 @@ function App() {
         background: '-webkit-linear-gradient(45deg, #667eea, #764ba2)',
         WebkitBackgroundClip: 'text',
         WebkitTextFillColor: 'transparent',
-        zIndex: 10
+        zIndex: 10,
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px'
       }}>
         VoiceConnect
+        <div style={{
+          width: '10px',
+          height: '10px',
+          borderRadius: '50%',
+          backgroundColor: socketRef.current?.connected ? '#4ade80' : '#f87171',
+          boxShadow: `0 0 10px ${socketRef.current?.connected ? '#4ade80' : '#f87171'}`
+        }} title={socketRef.current?.connected ? "Server Connected" : "Disconnected"}></div>
       </div>
 
       {status === 'welcome' && (
