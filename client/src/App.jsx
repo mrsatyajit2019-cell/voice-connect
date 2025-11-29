@@ -7,6 +7,7 @@ const SERVER_URL = import.meta.env.PROD ? '/' : 'http://localhost:3001';
 
 function App() {
   const [status, setStatus] = useState('welcome'); // welcome, idle, searching, connected, partner_disconnected
+  const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [agreedToTos, setAgreedToTos] = useState(false);
 
@@ -25,12 +26,14 @@ function App() {
 
     socketRef.current.on('connect', () => {
       console.log('Connected to signaling server');
+      setIsConnected(true);
       // Force re-render to update status dot
       setStatus(prev => prev);
     });
 
     socketRef.current.on('disconnect', () => {
       console.log('Disconnected from signaling server');
+      setIsConnected(false);
       setStatus(prev => prev);
     });
 
@@ -268,9 +271,9 @@ function App() {
           width: '10px',
           height: '10px',
           borderRadius: '50%',
-          backgroundColor: socketRef.current?.connected ? '#4ade80' : '#f87171',
-          boxShadow: `0 0 10px ${socketRef.current?.connected ? '#4ade80' : '#f87171'}`
-        }} title={socketRef.current?.connected ? "Server Connected" : "Disconnected"}></div>
+          backgroundColor: isConnected ? '#4ade80' : '#f87171',
+          boxShadow: `0 0 10px ${isConnected ? '#4ade80' : '#f87171'}`
+        }} title={isConnected ? "Server Connected" : "Disconnected"}></div>
       </div>
 
       {status === 'welcome' && (
