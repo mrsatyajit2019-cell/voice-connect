@@ -10,10 +10,15 @@ function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [agreedToTos, setAgreedToTos] = useState(false);
 
+  // Video state
+  const [videoActive, setVideoActive] = useState(false);
+  const [videoRequestStatus, setVideoRequestStatus] = useState('none'); // 'none', 'sending', 'received'
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+
   const socketRef = useRef();
   const peerRef = useRef();
   const localStreamRef = useRef();
-  const remoteAudioRef = useRef();
 
   useEffect(() => {
     socketRef.current = io(SERVER_URL);
@@ -32,6 +37,15 @@ function App() {
     socketRef.current.on('ice-candidate', handleNewICECandidate);
     socketRef.current.on('partner_disconnected', handlePartnerDisconnect);
 
+    socketRef.current.on('video_request', () => {
+      setVideoRequestStatus('received');
+    });
+
+    socketRef.current.on('video_accepted', async () => {
+      setVideoRequestStatus('none');
+      await enableVideo();
+    });
+
     return () => {
       socketRef.current.disconnect();
     };
@@ -39,10 +53,11 @@ function App() {
 
   const initializePeer = async (initiator) => {
     try {
-      // Ensure we have a stream
+      // Ensure we have audio stream
       if (!localStreamRef.current) {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         localStreamRef.current = stream;
+        setLocalStream(stream);
       }
       const stream = localStreamRef.current;
 
@@ -57,14 +72,22 @@ function App() {
       stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
       peer.ontrack = (event) => {
-        if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = event.streams[0];
-        }
+        setRemoteStream(event.streams[0]);
       };
 
       peer.onicecandidate = (event) => {
         if (event.candidate) {
           socketRef.current.emit('ice-candidate', event.candidate);
+        }
+      };
+
+      peer.onnegotiationneeded = async () => {
+        try {
+          const offer = await peer.createOffer();
+          await peer.setLocalDescription(offer);
+          socketRef.current.emit('offer', offer);
+        } catch (err) {
+          console.error("Negotiation error:", err);
         }
       };
 
@@ -108,10 +131,22 @@ function App() {
   };
 
   const cleanupCall = (stopLocalStream = true) => {
+    setVideoActive(false);
+    setVideoRequestStatus('none');
+    setRemoteStream(null);
+
     if (stopLocalStream && localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
       localStreamRef.current = null;
+      setLocalStream(null);
+    } else if (localStreamRef.current) {
+      // Just stop video tracks if we are keeping audio
+      localStreamRef.current.getVideoTracks().forEach(track => {
+        track.stop();
+        localStreamRef.current.removeTrack(track);
+      });
     }
+
     if (peerRef.current) {
       peerRef.current.close();
       peerRef.current = null;
@@ -126,6 +161,7 @@ function App() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         localStreamRef.current = stream;
+        setLocalStream(stream);
       } catch (e) {
         alert("Microphone access is required.");
         return;
@@ -144,16 +180,18 @@ function App() {
 
   const handleSkip = () => {
     cleanupCall(false); // Keep mic active
-    socketRef.current.emit('disconnect_call'); // Tell server to disconnect current partner
+    socketRef.current.emit('disconnect_call');
     setStatus('searching');
-    socketRef.current.emit('find_partner'); // Immediately look for next
+    socketRef.current.emit('find_partner');
   };
 
   const toggleMute = () => {
     if (localStreamRef.current) {
       const audioTrack = localStreamRef.current.getAudioTracks()[0];
-      audioTrack.enabled = !audioTrack.enabled;
-      setIsMuted(!audioTrack.enabled);
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setIsMuted(!audioTrack.enabled);
+      }
     }
   };
 
@@ -162,9 +200,47 @@ function App() {
     setStatus('idle');
   };
 
+  // Video Logic
+  const requestVideo = () => {
+    setVideoRequestStatus('sending');
+    socketRef.current.emit('video_request');
+  };
+
+  const acceptVideo = async () => {
+    setVideoRequestStatus('none');
+    socketRef.current.emit('video_accepted');
+    await enableVideo();
+  };
+
+  const rejectVideo = () => {
+    setVideoRequestStatus('none');
+    // Optionally notify partner
+  };
+
+  const enableVideo = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+
+      // Replace audio track in local stream (to keep same stream ID if possible, or just update ref)
+      // Actually easier to just replace the whole stream ref and add video track to peer
+
+      const videoTrack = stream.getVideoTracks()[0];
+      localStreamRef.current.addTrack(videoTrack);
+      setLocalStream(localStreamRef.current); // Force update
+
+      if (peerRef.current) {
+        peerRef.current.addTrack(videoTrack, localStreamRef.current);
+      }
+
+      setVideoActive(true);
+    } catch (err) {
+      console.error("Error enabling video:", err);
+      alert("Could not access camera.");
+    }
+  };
+
   return (
     <div className="app-container">
-      <audio ref={remoteAudioRef} autoPlay />
 
       <div style={{
         position: 'absolute',
@@ -241,6 +317,13 @@ function App() {
           onSkip={handleSkip}
           isMuted={isMuted}
           toggleMute={toggleMute}
+          localStream={localStream}
+          remoteStream={remoteStream}
+          videoActive={videoActive}
+          onRequestVideo={requestVideo}
+          videoRequestStatus={videoRequestStatus}
+          onAcceptVideo={acceptVideo}
+          onRejectVideo={rejectVideo}
         />
       )}
     </div>

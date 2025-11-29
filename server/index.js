@@ -18,17 +18,36 @@ const io = new Server(server, {
     }
 });
 
-let waitingUser = null;
+// Use a Set for O(1) lookups and uniqueness
+const waitingQueue = new Set();
 
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
     socket.on('find_partner', () => {
-        if (waitingUser) {
-            // Match found
-            const partner = waitingUser;
-            waitingUser = null;
+        // Ensure user isn't already in queue or matched
+        if (waitingQueue.has(socket)) {
+            return;
+        }
 
+        // Filter out disconnected sockets from queue just in case
+        // (though disconnect handler should catch them)
+
+        let partner = null;
+
+        // Simple FIFO: Get the first available user who isn't self
+        for (const user of waitingQueue) {
+            if (user.id !== socket.id) {
+                partner = user;
+                break;
+            }
+        }
+
+        if (partner) {
+            // Remove partner from queue
+            waitingQueue.delete(partner);
+
+            // Match found
             // Notify both users
             socket.emit('partner_found', { initiator: true });
             partner.emit('partner_found', { initiator: false });
@@ -40,8 +59,8 @@ io.on('connection', (socket) => {
             console.log(`Matched ${socket.id} with ${partner.id}`);
         } else {
             // No one waiting, add to queue
-            waitingUser = socket;
-            console.log(`User ${socket.id} waiting for partner`);
+            waitingQueue.add(socket);
+            console.log(`User ${socket.id} added to queue. Queue size: ${waitingQueue.size}`);
         }
     });
 
@@ -63,7 +82,24 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('video_request', () => {
+        if (socket.partnerId) {
+            io.to(socket.partnerId).emit('video_request');
+        }
+    });
+
+    socket.on('video_accepted', () => {
+        if (socket.partnerId) {
+            io.to(socket.partnerId).emit('video_accepted');
+        }
+    });
+
     socket.on('disconnect_call', () => {
+        // Remove from queue if they were waiting
+        if (waitingQueue.has(socket)) {
+            waitingQueue.delete(socket);
+        }
+
         if (socket.partnerId) {
             io.to(socket.partnerId).emit('partner_disconnected');
             const partnerSocket = io.sockets.sockets.get(socket.partnerId);
@@ -72,23 +108,19 @@ io.on('connection', (socket) => {
             }
             socket.partnerId = null;
         }
-
-        if (waitingUser === socket) {
-            waitingUser = null;
-        }
     });
 
     socket.on('disconnect', () => {
         console.log('User disconnected:', socket.id);
 
-        if (waitingUser === socket) {
-            waitingUser = null;
+        // Remove from queue immediately
+        if (waitingQueue.has(socket)) {
+            waitingQueue.delete(socket);
+            console.log(`User ${socket.id} removed from queue. Queue size: ${waitingQueue.size}`);
         }
 
         if (socket.partnerId) {
             io.to(socket.partnerId).emit('partner_disconnected');
-            // Ideally, we should clear the partner's partnerId as well, 
-            // but the client will handle the disconnect event and likely re-search or show a message.
             const partnerSocket = io.sockets.sockets.get(socket.partnerId);
             if (partnerSocket) {
                 partnerSocket.partnerId = null;
