@@ -3,7 +3,7 @@ import io from 'socket.io-client';
 import { Phone, Loader2, RefreshCw } from 'lucide-react';
 import CallInterface from './components/CallInterface';
 
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
+const SERVER_URL = import.meta.env.PROD ? '/' : 'http://localhost:3001';
 
 function App() {
   const [status, setStatus] = useState('welcome'); // welcome, idle, searching, connected, partner_disconnected
